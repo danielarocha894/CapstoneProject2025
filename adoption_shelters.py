@@ -2572,151 +2572,98 @@ def render_breed_statistics(breeds_data):
         st.warning("No numeric columns found for statistical analysis.")
 
 def render_clustering_analysis(breeds_data):
-    """Renders clustering analysis."""
-    st.subheader("🎯 Breed Clustering Analysis")
-    
-    # Check if we have normalized features
+    """Renders clustering analysis (fixed): K-Means + t-SNE 2D."""
+    st.subheader("🎯 Breed Clustering Analysis (Fixed: K-Means + t-SNE 2D)")
+
+    # Check normalized features
     norm_cols = [col for col in breeds_data.columns if col.endswith('_norm')]
-    
     if not norm_cols:
         st.warning("No normalized features found for clustering. Try loading the data again.")
-        
-        # Show available columns
         st.write("**Available columns:**", list(breeds_data.columns))
         return
-    
-    # Clustering parameters
-    st.write("### Clustering Configuration")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        n_clusters = st.slider("Number of Clusters", 2, 10, 4)
-    
-    with col2:
-        algorithm = st.selectbox("Clustering Algorithm", 
-                                ["K-Means", "Agglomerative", "DBSCAN"])
-    
-    with col3:
-        visualization = st.selectbox("Visualization Method", 
-                                    ["PCA (2D)", "PCA (3D)", "t-SNE (2D)"])
-    
-    if st.button("🔍 Run Clustering Analysis", type="primary", use_container_width=True):
-        with st.spinner("Clustering in progress. This may take a moment..."):
+
+    # ---- FIXED CONFIG ----
+    n_clusters = 4          # <- escolha fixa (mude aqui se precisar)
+    random_state = 42
+    perplexity = 30         # <- t-SNE parameter (ajuste se dataset pequeno)
+    # ----------------------
+
+    if st.button("🔍 Run Clustering (K-Means + t-SNE 2D)", type="primary", use_container_width=True):
+        with st.spinner("Clustering in progress..."):
             try:
-                # Prepare data
                 X = breeds_data[norm_cols].values
-                
-                # Apply clustering
-                if algorithm == "K-Means":
-                    clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clusters = clusterer.fit_predict(X)
-                elif algorithm == "Agglomerative":
-                    clusterer = AgglomerativeClustering(n_clusters=n_clusters)
-                    clusters = clusterer.fit_predict(X)
-                else:  # DBSCAN
-                    clusterer = DBSCAN(eps=0.5, min_samples=5)
-                    clusters = clusterer.fit_predict(X)
-                
+
+                # 1) K-Means clustering
+                kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+                clusters = kmeans.fit_predict(X)
                 breeds_data['cluster'] = clusters
-                
-                # Calculate clustering quality metrics
-                unique_clusters = len(set(clusters))
-                if unique_clusters > 1 and algorithm != "DBSCAN":
-                    try:
-                        silhouette = silhouette_score(X, clusters)
-                        st.info(f"Silhouette Score: {silhouette:.3f}")
-                    except:
-                        pass
-                
-                # Reduce dimensionality for visualization
-                if visualization == "PCA (2D)":
-                    reducer = PCA(n_components=2, random_state=42)
-                    reduced_data = reducer.fit_transform(X)
-                    breeds_data['dim1'] = reduced_data[:, 0]
-                    breeds_data['dim2'] = reduced_data[:, 1]
-                    
-                    # Calculate explained variance
-                    variance = reducer.explained_variance_ratio_.sum() * 100
-                    st.info(f"PCA explains {variance:.1f}% of variance")
-                    
-                    # Visualize clusters
-                    fig = px.scatter(breeds_data, x='dim1', y='dim2', 
-                                    color='cluster', hover_data=['breed', 'size', 'exercise'],
-                                    title=f'Breed Clusters ({algorithm}) - PCA 2D',
-                                    labels={'cluster': 'Cluster'},
-                                    color_continuous_scale=px.colors.qualitative.Set3)
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif visualization == "PCA (3D)":
-                    reducer = PCA(n_components=3, random_state=42)
-                    reduced_data = reducer.fit_transform(X)
-                    breeds_data['pca1'] = reduced_data[:, 0]
-                    breeds_data['pca2'] = reduced_data[:, 1]
-                    breeds_data['pca3'] = reduced_data[:, 2]
-                    
-                    fig = px.scatter_3d(breeds_data, x='pca1', y='pca2', z='pca3',
-                                       color='cluster', hover_data=['breed', 'size'],
-                                       title=f'Breed Clusters ({algorithm}) - PCA 3D',
-                                       labels={'cluster': 'Cluster'})
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                else:  # t-SNE
-                    reducer = TSNE(n_components=2, random_state=42, perplexity=30)
-                    reduced_data = reducer.fit_transform(X)
-                    breeds_data['tsne1'] = reduced_data[:, 0]
-                    breeds_data['tsne2'] = reduced_data[:, 1]
-                    
-                    fig = px.scatter(breeds_data, x='tsne1', y='tsne2', 
-                                    color='cluster', hover_data=['breed', 'size', 'exercise'],
-                                    title=f'Breed Clusters ({algorithm}) - t-SNE 2D',
-                                    labels={'cluster': 'Cluster'},
-                                    color_continuous_scale=px.colors.qualitative.Set2)
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Cluster analysis
-                st.subheader("📊 Cluster Analysis")
-                
-                for cluster_id in sorted(breeds_data['cluster'].unique()):
-                    if cluster_id == -1 and algorithm == "DBSCAN":
-                        cluster_name = "Noise/Outliers"
-                    else:
-                        cluster_name = f"Cluster {cluster_id}"
-                    
-                    cluster_breeds = breeds_data[breeds_data['cluster'] == cluster_id]
-                    
-                    with st.expander(f"{cluster_name} ({len(cluster_breeds)} breeds)"):
-                        # Find breed column
-                        breed_col = None
-                        for col in cluster_breeds.columns:
-                            if 'breed' in col.lower():
-                                breed_col = col
-                                break
-                        
+
+                # 2) Metrics (only if > 1 cluster)
+                if len(set(clusters)) > 1:
+                    sil = silhouette_score(X, clusters)
+                    db = davies_bouldin_score(X, clusters)
+                    st.info(f"Silhouette Score (↑ better): {sil:.3f}")
+                    st.info(f"Davies–Bouldin (↓ better): {db:.3f}")
+
+                # 3) t-SNE 2D visualization
+                #    Important: perplexity must be < n_samples
+                n_samples = X.shape[0]
+                safe_perplexity = min(perplexity, max(5, n_samples - 1))
+
+                tsne = TSNE(
+                    n_components=2,
+                    random_state=random_state,
+                    perplexity=safe_perplexity,
+                    init="pca",
+                    learning_rate="auto"
+                )
+                reduced = tsne.fit_transform(X)
+                breeds_data['tsne1'] = reduced[:, 0]
+                breeds_data['tsne2'] = reduced[:, 1]
+
+                # Try to find the breed name column for hover
+                breed_col = next((c for c in breeds_data.columns if 'breed' in c.lower()), None)
+
+                hover_cols = []
+                if breed_col:
+                    hover_cols.append(breed_col)
+                # Add some common columns if they exist
+                for c in ['size', 'exercise', 'grooming', 'life_time']:
+                    if c in breeds_data.columns:
+                        hover_cols.append(c)
+
+                fig = px.scatter(
+                    breeds_data,
+                    x='tsne1',
+                    y='tsne2',
+                    color='cluster',
+                    hover_data=hover_cols if hover_cols else None,
+                    title=f"K-Means Clusters (k={n_clusters}) - t-SNE 2D",
+                    labels={'cluster': 'Cluster'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 4) Cluster summary
+                st.subheader("📊 Cluster Summary")
+                for cid in sorted(breeds_data['cluster'].unique()):
+                    cluster_breeds = breeds_data[breeds_data['cluster'] == cid]
+
+                    with st.expander(f"Cluster {cid} ({len(cluster_breeds)} breeds)"):
                         if breed_col:
-                            sample_breeds = cluster_breeds[breed_col].head(5).tolist()
-                            st.write(f"**Sample breeds:** {', '.join(sample_breeds)}")
-                        
-                        # Size distribution if available
-                        size_col = None
-                        for col in cluster_breeds.columns:
-                            if 'size' in col.lower() and not 'numeric' in col and col != 'size_home':
-                                size_col = col
-                                break
-                        
-                        if size_col and size_col in cluster_breeds.columns:
-                            size_dist = cluster_breeds[size_col].value_counts()
-                            if not size_dist.empty:
-                                st.write("**Size distribution:**")
-                                for size, count in size_dist.items():
-                                    st.write(f"  - {size}: {count} breeds")
-                
+                            st.write("**Sample breeds:**", ", ".join(cluster_breeds[breed_col].dropna().head(8).astype(str)))
+
+                        # quick numeric means
+                        numeric = cluster_breeds.select_dtypes(include=[np.number]).copy()
+                        drop_cols = [c for c in ['cluster', 'tsne1', 'tsne2'] if c in numeric.columns]
+                        numeric = numeric.drop(columns=drop_cols, errors='ignore')
+
+                        if not numeric.empty:
+                            st.write("**Mean feature values (numeric):**")
+                            st.dataframe(numeric.mean().to_frame("mean").round(2), use_container_width=True)
+
             except Exception as e:
                 st.error(f"Clustering failed: {str(e)}")
-                st.info("Try reducing the number of clusters or using a different algorithm.")
+                st.info("If the dataset is small, reduce perplexity or number of clusters.")
 
 def render_breed_search(breeds_data):
     """Renders breed search functionality."""
